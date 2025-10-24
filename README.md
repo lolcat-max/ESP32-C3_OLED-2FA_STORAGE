@@ -11,5 +11,5 @@ avrdude -c usbasp -p m328p -e
 
 TODO: add second passcode @ address 0
 
-TODO: implement uBitcoin for wallet generation.
+TODO: implement uBitcoin for wallet generation
 
