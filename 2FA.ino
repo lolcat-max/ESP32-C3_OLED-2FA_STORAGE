@@ -1,17 +1,13 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <EEPROM.h>
-
-#ifdef U8X8_HAVE_HW_SPI
-#include <SPI.h>
-#endif
-#ifdef U8X8_HAVE_HW_I2C
 #include <Wire.h>
-#endif
 
 // --- Hardware and Display Setup ---
 #define SDA_PIN 5
 #define SCL_PIN 6
+#define EEPROM_SIZE 512  // ESP32-C3 uses flash emulation
+
 U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ SCL_PIN, /* data=*/ SDA_PIN);
 
 // --- Security System ---
@@ -23,7 +19,7 @@ char inputBuffer[5];        // To store the user's serial input
 int bufferIndex = 0;
 
 unsigned long lockoutTime = 0;
-const unsigned long lockoutDuration = 3000; // 3-second lockout
+const unsigned long lockoutDuration = 600000; // 10-minute lockout
 unsigned long lastFrame = 0;
 const unsigned long frameMs = 50; // OLED refresh rate
 
@@ -36,30 +32,32 @@ void resetLoginState();
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("--- ESP32-C3 Challenge-Response Access System ---");
+  Serial.println("A PIN has been generated on the OLED screen.");
+  Serial.println("Enter the PIN to gain access.");
   Wire.begin(SDA_PIN, SCL_PIN);
   u8g2.begin();
 
-  // Use noise from a floating analog pin for true random numbers
+  if (!EEPROM.begin(EEPROM_SIZE)) {
+    Serial.println("Failed to initialize EEPROM emulation!");
+    while (true);
+  }
+
   randomSeed(analogRead(A0));
-  
-  generateNewChallenge(); // Generate the first PIN
-  
-  Serial.println("--- Challenge-Response Access System ---");
-  Serial.println("A PIN has been generated on the OLED screen.");
-  Serial.println("Enter the PIN to gain access.");
+  generateNewChallenge();
+
+ 
 }
 
 void loop() {
   unsigned long now = millis();
 
-  // State machine for handling access control
   if (currentState == LOCKED || currentState == ACCESS_DENIED) {
     handleSerialInput();
   } else if (currentState == UNLOCKED) {
     handleDataStorageCommands();
   }
 
-  // Update the OLED display periodically
   if (now - lastFrame >= frameMs) {
     lastFrame = now;
     drawOLED();
@@ -67,123 +65,145 @@ void loop() {
 }
 
 /**
- * @brief Generates a new 4-digit random PIN and stores it as a string.
+ * @brief Generates a new 4-digit random PIN.
  */
 void generateNewChallenge() {
-  long newPin = random(1000, 10000); // Generate a number between 1000 and 9999
-  itoa(newPin, challengePin, 10);   // Convert the number to a string
+  long newPin = random(1000, 10000);
+  itoa(newPin, challengePin, 10);
 }
 
 /**
  * @brief Handles incoming serial data for PIN entry.
  */
 void handleSerialInput() {
-  // If in lockout, do nothing until the time has passed
-  if (currentState == ACCESS_DENIED && millis() < lockoutTime) {
-    return;
-  }
-  // If lockout is over, generate a new challenge and reset to LOCKED
-  if (currentState == ACCESS_DENIED) {
-    resetLoginState();
-  }
+  if (currentState == ACCESS_DENIED && millis() < lockoutTime) return;
+  if (currentState == ACCESS_DENIED) resetLoginState();
 
   if (Serial.available() > 0) {
     char receivedChar = Serial.read();
 
     if (receivedChar == '\n' || receivedChar == '\r') {
-      inputBuffer[bufferIndex] = '\0'; // Null-terminate the user's input
+      inputBuffer[bufferIndex] = '\0';
 
       if (strcmp(inputBuffer, challengePin) == 0) {
-        // Correct PIN
         currentState = UNLOCKED;
         Serial.println("\nPIN Correct. Access Granted.");
-        Serial.println("Data storage commands: read <addr>, write <addr> <val>, logout");
+        Serial.println("Commands: read <addr>, write <addr> <text>, logout");
       } else {
-        // Incorrect PIN
         currentState = ACCESS_DENIED;
         lockoutTime = millis() + lockoutDuration;
-        Serial.println("\nPIN Incorrect. System locked for 3 seconds.");
+        Serial.println("\nPIN Incorrect. System locked for 10 minutes.");
       }
-      bufferIndex = 0; // Reset buffer for next attempt
+      bufferIndex = 0;
       memset(inputBuffer, 0, sizeof(inputBuffer));
-      
+
     } else if (isDigit(receivedChar) && bufferIndex < 4) {
       inputBuffer[bufferIndex++] = receivedChar;
-      Serial.print("*"); // Mask input in the serial monitor
+      Serial.print("*");
     }
   }
 }
 
 /**
- * @brief Handles EEPROM commands when the system is unlocked.
+ * @brief EEPROM commands for ESP32-C3 (string read/write).
  */
 void handleDataStorageCommands() {
-    if (Serial.available() > 0) {
-        String command = Serial.readStringUntil('\n');
-        command.trim();
-        
-        if (command.startsWith("read")) {
-            int address = command.substring(5).toInt();
-            if (address >= 0 && address < EEPROM.length()) {
-                byte value = EEPROM.read(address);
-                Serial.print("Value at addr "); Serial.print(address); Serial.print(": "); Serial.println(value);
-            } else {
-                Serial.println("Error: Invalid address.");
-            }
-        } else if (command.startsWith("write")) {
-            int firstSpace = command.indexOf(' ');
-            int secondSpace = command.indexOf(' ', firstSpace + 1);
-            int address = command.substring(firstSpace + 1, secondSpace).toInt();
-            int value = command.substring(secondSpace + 1).toInt();
+  if (!Serial.available()) return;
 
-            if (address >= 0 && address < EEPROM.length()) {
-                EEPROM.write(address, (byte)value);
-                Serial.print("Wrote "); Serial.print(value); Serial.print(" to addr "); Serial.println(address);
-            } else {
-                Serial.println("Error: Invalid address.");
-            }
-        } else if (command == "logout") {
-            Serial.println("Logging out. A new PIN has been generated.");
-            resetLoginState();
-        } else {
-            Serial.println("Unknown command.");
-        }
+  String command = Serial.readStringUntil('\n');
+  command.trim();
+
+  if (command.startsWith("read")) {
+    int address = command.substring(5).toInt();
+    if (address < 0 || address >= EEPROM_SIZE) {
+      Serial.println("Error: Invalid address.");
+      return;
     }
+
+    Serial.print("Read @ ");
+    Serial.print(address);
+    Serial.print(": ");
+
+    // Read until null terminator or EEPROM end
+    for (int i = address; i < EEPROM_SIZE; i++) {
+      byte b = EEPROM.read(i);
+      if (b == 0x00) break;
+      Serial.print((char)b);
+    }
+    Serial.println();
+
+  } else if (command.startsWith("write")) {
+    int firstSpace = command.indexOf(' ');
+    int secondSpace = command.indexOf(' ', firstSpace + 1);
+
+    if (firstSpace == -1 || secondSpace == -1) {
+      Serial.println("Error: Format is 'write <addr> <text>'");
+      return;
+    }
+
+    int address = command.substring(firstSpace + 1, secondSpace).toInt();
+    String data = command.substring(secondSpace + 1);
+
+    if (address < 0 || address >= EEPROM_SIZE) {
+      Serial.println("Error: Invalid address.");
+      return;
+    }
+
+    int required = data.length() + 1;
+    if (address + required > EEPROM_SIZE) {
+      Serial.println("Error: Not enough EEPROM space for string.");
+      return;
+    }
+
+    for (int i = 0; i < data.length(); i++) {
+      EEPROM.write(address + i, data[i]);
+    }
+    EEPROM.write(address + data.length(), 0x00);
+    EEPROM.commit(); // ⚠️ Required on ESP32
+
+    Serial.print("Wrote '");
+    Serial.print(data);
+    Serial.print("' to address ");
+    Serial.println(address);
+
+  } else if (command.equalsIgnoreCase("logout")) {
+    Serial.println("Logging out...");
+    resetLoginState();
+  } else {
+    Serial.println("Unknown command. Use: read <addr> | write <addr> <text> | logout");
+  }
 }
 
 /**
- * @brief Resets the system to the initial locked state and generates a new challenge.
+ * @brief Resets the system and generates a new challenge PIN.
  */
 void resetLoginState() {
-    currentState = LOCKED;
-    bufferIndex = 0;
-    memset(inputBuffer, 0, sizeof(inputBuffer));
-    generateNewChallenge(); // Generate a new PIN for the next login attempt
+  currentState = LOCKED;
+  bufferIndex = 0;
+  memset(inputBuffer, 0, sizeof(inputBuffer));
+  generateNewChallenge();
 }
 
 /**
- * @brief Main drawing function that updates the OLED based on the system state.
+ * @brief Main drawing function that updates the OLED.
  */
 void drawOLED() {
   u8g2.firstPage();
   do {
-    u8g2.setFont(u8g2_font_ncenB10_tr); // Use a larger font
-    
+    u8g2.setFont(u8g2_font_ncenB10_tr);
     switch (currentState) {
       case LOCKED:
-        u8g2.setFont(u8g2_font_fub20_tr); // Even larger font for the PIN
+        u8g2.setFont(u8g2_font_fub20_tr);
         u8g2.setCursor(25, 55);
         u8g2.print(challengePin);
         break;
-      
       case UNLOCKED:
-        u8g2.drawStr(10, 35, "Access Granted");
-        u8g2.setFont(u8g2_font_6x10_tf);
+        u8g2.setFont(u8g2_font_ncenB08_tr);
+        u8g2.drawStr(10, 30, "Unlocked");
         break;
-
       case ACCESS_DENIED:
-        u8g2.drawStr(15, 35, "PIN Incorrect");
-        u8g2.setFont(u8g2_font_6x10_tf);
+        u8g2.setFont(u8g2_font_ncenB08_tr);
+        u8g2.drawStr(10, 30, "Access Denied");
         break;
     }
   } while (u8g2.nextPage());
