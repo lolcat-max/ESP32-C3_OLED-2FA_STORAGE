@@ -9,5 +9,5 @@ To reverse, you’d need to erase the chip:
 
 avrdude -c usbasp -p m328p -e
 
-
+TODO add second passcode @ address 0
 
