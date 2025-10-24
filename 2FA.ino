@@ -46,7 +46,6 @@ void setup() {
   randomSeed(analogRead(A0));
   generateNewChallenge();
 
- 
 }
 
 void loop() {
@@ -198,10 +197,8 @@ void drawOLED() {
         u8g2.print(challengePin);
         break;
       case UNLOCKED:
-   x
         break;
       case ACCESS_DENIED:
-        
         break;
     }
   } while (u8g2.nextPage());
