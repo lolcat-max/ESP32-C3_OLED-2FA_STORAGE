@@ -198,12 +198,10 @@ void drawOLED() {
         u8g2.print(challengePin);
         break;
       case UNLOCKED:
-        u8g2.setFont(u8g2_font_ncenB08_tr);
-        u8g2.drawStr(10, 30, "Unlocked");
+   x
         break;
       case ACCESS_DENIED:
-        u8g2.setFont(u8g2_font_ncenB08_tr);
-        u8g2.drawStr(10, 30, "Access Denied");
+        
         break;
     }
   } while (u8g2.nextPage());
