@@ -6,7 +6,7 @@
 // --- Hardware and Display Setup ---
 #define SDA_PIN 5
 #define SCL_PIN 6
-#define EEPROM_SIZE 512  // ESP32-C3 uses flash emulation
+#define EEPROM_SIZE 5120  // ESP32-C3 uses flash emulation
 
 U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ SCL_PIN, /* data=*/ SDA_PIN);
 
