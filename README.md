@@ -1,5 +1,3 @@
-in trezor/rand.c change 'esp_random()' to 'random32()'
-
 You can use avrdude to set the lock bits that protect flash from reprogramming.
 For example:
 avrdude -c usbasp -p m328p -U lock:w:0x0F:m
